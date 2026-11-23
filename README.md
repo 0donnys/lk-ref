@@ -6,6 +6,58 @@
 
 Необходимо выполнить fork репозитория и результаты выполнения заданий залить на github.
 
+---
+
+## Результаты выполнения (что сделано)
+
+### Задание 1 — основное: поддержка типов данных в `@AppConfig`
+
+- В аннотацию `@AppConfig` добавлен параметр `type()` и перечисление `AppConfig.Type`
+  (`AUTO`, `INT`, `LONG`, `DOUBLE`, `BOOLEAN`, `*_ARRAY`, `*_LIST` и т.д.).
+- `AppConfigWorker` преобразует строки из `config.properties` в нужный тип:
+  - целые: `int/Integer`, `long/Long`, `short/Short`, `byte/Byte`;
+  - вещественные: `float/Float`, `double/Double`;
+  - логические: `boolean/Boolean` (`true/false`, `1/0`, `yes/no`, `on/off`, `да/нет`);
+  - массивы (`String[]`, `int[]`, `double[]`, `Integer[]`, ...) — значения через запятую;
+  - списки (`List<String>`, `List<Integer>`, ...) — тип элемента берётся из обобщённого типа поля.
+- Тип по умолчанию определяется автоматически по типу поля (`Type.AUTO`).
+- Обработка ошибок: некорректное значение логируется (`java.util.logging`),
+  поле сохраняет значение по умолчанию.
+- Добавлен демонстрационный класс `B` с полями всех поддерживаемых типов
+  и соответствующие свойства в `config.properties`.
+
+### Задание 2 — дополнительное: работа с генериками
+
+Пакет `ru.bgpu.lk.ref.generic`:
+
+- `ParameterizedTypeImpl` — своя реализация `java.lang.reflect.ParameterizedType`
+  (в JDK нет публичного способа создать такой тип вручную);
+- `DataContainer<T, U extends Number>` — тестовый класс с полями
+  `List<T> items`, `Map<String, U> metadata`, `Set<? extends Comparable<T>> filters`;
+- `StringIntegerMap extends HashMap<String, Integer>`;
+- `GenericMethods` — обобщённые методы `createList` и `createSortedMap`;
+- `GenericAnalyzer` — методы:
+  - `analyzeGenericFields(Class<?>)` — разбор обобщённых полей (аргументы, ограничения, wildcard);
+  - `extractTypeArguments(Object)` — восстановление фактических типов по цепочке наследования;
+  - `createGenericCollection(String, Type...)` — создание коллекций во время выполнения;
+  - `invokeGenericMethod(...)` — вызов обобщённых методов с валидацией ограничений;
+- `GenericAnalyzerDemo` — точка входа, демонстрирующая все примеры из задания.
+
+## Как запустить
+
+```bash
+# Сборка
+mvn clean compile
+
+# Основное задание (классы A и B)
+mvn exec:java -Dexec.mainClass="ru.bgpu.lk.ref.Main"
+
+# Дополнительное задание (генерики)
+mvn exec:java -Dexec.mainClass="ru.bgpu.lk.ref.generic.GenericAnalyzerDemo"
+```
+
+---
+
 ## Описание проекта
 
 Этот проект представляет собой учебный пример использования Java Reflection API для реализации механизма конфигурации приложения через аннотации. Проект демонстрирует, как с помощью Reflection API можно автоматически загружать значения полей из конфигурационного файла на основе аннотаций.

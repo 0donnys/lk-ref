@@ -1,70 +1,139 @@
-
 package ru.bgpu.lk.ref;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.util.Properties;
-import java.util.logging.Level;
-import java.util.logging.Logger;
 import org.reflections.Reflections;
 import org.reflections.scanners.Scanners;
 import org.reflections.util.ClasspathHelper;
 import org.reflections.util.ConfigurationBuilder;
 
-/**
- * Класс AppConfigWorker отвечает за инициализацию полей, помеченных аннотацией @AppConfig,
- * значениями из конфигурационного файла с использованием Reflection API.
- * 
- * Основной метод init выполняет следующие шаги:
- * 1. Сканирует указанный пакет для поиска полей с аннотацией @AppConfig.
- * 2. Загружает свойства из конфигурационного файла.
- * 3. Для каждого найденного поля устанавливает значение из свойств или значение по умолчанию из аннотации.
- * 4. Использует Reflection API для доступа к приватным статическим полям и изменения их значений.
- */
-public class AppConfigWorker {
-    
-    /**
-     * Инициализирует все поля с аннотацией @AppConfig в указанном пакете.
-     * 
-     * @param packageName имя пакета для сканирования (например, "ru.bgpu.lk.ref")
-     * @param propFile путь к файлу свойств (например, "config.properties")
-     */
-    public static void init(String packageName, String propFile) {
-        try {
-            // Создаем конфигурацию для сканирования классов в указанном пакете
-            Reflections reflections = new Reflections(new ConfigurationBuilder()
-                    .setUrls(ClasspathHelper.forPackage(packageName))
-                    .setScanners(Scanners.FieldsAnnotated)
-            );
-            
-            // Загружаем свойства из конфигурационного файла
-            Properties properties = new Properties();
-            properties.load(new FileInputStream(new File(propFile)));
-            
-            // Получаем все поля с аннотацией @AppConfig и обрабатываем каждое
-            reflections.getFieldsAnnotatedWith(AppConfig.class).forEach( field -> {
-               
-                // Получаем значение из свойств или используем значение по умолчанию из аннотации
-                String value = properties.getProperty(
-                        field.getName(),
-                        field.getAnnotation(AppConfig.class).value()
-                );
-                try {
-                    // Разрешаем доступ к полю (даже если оно private)
-                    field.setAccessible(true);
-                    // Устанавливаем значение поля (для статических полей первый параметр null)
-                    field.set(null, value);
-                    // Возвращаем исходный уровень доступа
-                    field.setAccessible(false);
-                } catch (IllegalArgumentException | IllegalAccessException ex) {
-                    Logger.getLogger(AppConfigWorker.class.getName()).log(Level.SEVERE, null, ex);
-                }
-            });
-        } catch (IllegalArgumentException | IOException ex) {
-            Logger.getLogger(AppConfigWorker.class.getName()).log(Level.SEVERE, null, ex);
-        }
-         
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.lang.reflect.Array;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Properties;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+
+public final class AppConfigWorker {
+
+    private static final Logger LOG = Logger.getLogger(AppConfigWorker.class.getName());
+
+    private AppConfigWorker() {
     }
-    
+
+    public static void init(String packageName, String propertyFile) {
+        Properties properties = new Properties();
+        try (FileInputStream in = new FileInputStream(propertyFile)) {
+            properties.load(in);
+        } catch (IOException e) {
+            LOG.log(Level.SEVERE, "Не удалось прочитать " + propertyFile, e);
+            return;
+        }
+
+        Reflections reflections = new Reflections(new ConfigurationBuilder()
+                .setUrls(ClasspathHelper.forPackage(packageName))
+                .setScanners(Scanners.FieldsAnnotated));
+
+        for (Field field : reflections.getFieldsAnnotatedWith(AppConfig.class)) {
+            if (!Modifier.isStatic(field.getModifiers())) {
+                LOG.warning("Поле " + field.getName() + " не static, пропущено");
+                continue;
+            }
+            String text = properties.getProperty(field.getName(),
+                    field.getAnnotation(AppConfig.class).value());
+            try {
+                field.setAccessible(true);
+                field.set(null, convert(text, field));
+            } catch (Exception e) {
+                LOG.log(Level.WARNING, "Ошибка в поле " + field.getName()
+                        + " со значением '" + text + "'", e);
+            }
+        }
+    }
+
+    private static Object convert(String text, Field field) {
+        Class<?> type = field.getType();
+        if (type == String.class) {
+            return text;
+        }
+        if (type == int.class || type == Integer.class) {
+            return Integer.valueOf(text);
+        }
+        if (type == long.class || type == Long.class) {
+            return Long.valueOf(text);
+        }
+        if (type == short.class || type == Short.class) {
+            return Short.valueOf(text);
+        }
+        if (type == byte.class || type == Byte.class) {
+            return Byte.valueOf(text);
+        }
+        if (type == float.class || type == Float.class) {
+            return Float.valueOf(text);
+        }
+        if (type == double.class || type == Double.class) {
+            return Double.valueOf(text);
+        }
+        if (type == boolean.class || type == Boolean.class) {
+            return Boolean.valueOf(text);
+        }
+        if (type.isArray()) {
+            return array(text, type.getComponentType());
+        }
+        if (List.class.isAssignableFrom(type)) {
+            return list(text, field);
+        }
+        throw new IllegalArgumentException("Тип не поддерживается: " + type.getName());
+    }
+
+    private static Object array(String text, Class<?> component) {
+        String[] parts = parts(text);
+        Object result = Array.newInstance(component, parts.length);
+        for (int i = 0; i < parts.length; i++) {
+            Array.set(result, i, scalar(parts[i], component));
+        }
+        return result;
+    }
+
+    private static List<?> list(String text, Field field) {
+        Type generic = field.getGenericType();
+        if (!(generic instanceof ParameterizedType)) {
+            return List.of(parts(text));
+        }
+        ParameterizedType parameterized = (ParameterizedType) generic;
+        Type argument = parameterized.getActualTypeArguments()[0];
+        if (!(argument instanceof Class<?>)) {
+            throw new IllegalArgumentException("Не удалось определить тип списка");
+        }
+        Class<?> elementType = (Class<?>) argument;
+        List<Object> result = new ArrayList<>();
+        for (String part : parts(text)) {
+            result.add(scalar(part, elementType));
+        }
+        return result;
+    }
+
+    private static Object scalar(String value, Class<?> type) {
+        if (type == String.class) return value;
+        if (type == int.class || type == Integer.class) return Integer.valueOf(value);
+        if (type == long.class || type == Long.class) return Long.valueOf(value);
+        if (type == short.class || type == Short.class) return Short.valueOf(value);
+        if (type == byte.class || type == Byte.class) return Byte.valueOf(value);
+        if (type == float.class || type == Float.class) return Float.valueOf(value);
+        if (type == double.class || type == Double.class) return Double.valueOf(value);
+        if (type == boolean.class || type == Boolean.class) return Boolean.valueOf(value);
+        throw new IllegalArgumentException("Тип элемента не поддерживается: " + type.getName());
+    }
+
+    private static String[] parts(String text) {
+        String[] parts = text.split(",");
+        for (int i = 0; i < parts.length; i++) {
+            parts[i] = parts[i].trim();
+        }
+        return parts;
+    }
 }
